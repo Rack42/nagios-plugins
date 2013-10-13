@@ -1,0 +1,78 @@
+#!/usr/bin/perl
+
+use POSIX;
+use RPC::XML;
+use RPC::XML::Client;
+use DateTime;
+
+my $api = RPC::XML::Client->new('https://rpc.gandi.net/xmlrpc/');
+
+my $apikey = '<GANDI API KEY>';
+
+my $warning = '';
+my $critical = '';
+
+my $warning_threshold = 30;
+my $critical_threshold = 10;
+
+my $warning_count = 0;
+my $critical_count = 0;
+
+# Now you can call API methods.
+# # You must authenticate yourself by passing the API key
+# # as the first method's argument
+#my $version = $api->send_request( 'version.info', $apikey );
+my $list = $api->send_request( 'domain.list', $apikey );
+
+my $return_code=0;
+my $state='OK';
+
+my $now=DateTime->now;
+
+foreach (@{$list->value}) {
+	my $fqdn=$_->{'fqdn'};
+	my $date=$_->{'date_registry_end'};
+
+	my $dt = DateTime->new(
+		year =>substr($date,0,4),
+		month =>substr($date,4,2),
+		day =>substr($date,6,2),
+		hour =>substr($date,9,2),
+		minute =>substr($date,12,2),
+		second =>substr($date,15,2),
+		nanosecond => 0,
+		time_zone => 'Europe/Paris',
+	);
+
+	my $days_to_expiration=ceil(($dt->epoch()-$now->epoch())/86400);
+
+	next if($days_to_expiration > $warning_threshold);
+	if($days_to_expiration > $critical_threshold) {
+		$warning.=$fqdn.' ('.$days_to_expiration.' days left), ';
+		$warning_count++;
+		if($return_code<1) {
+			$return_code=1;
+			$state='WARNING';
+		}
+	} else {
+		$critical.=$fqdn.' ('.$days_to_expiration.' days left), ';
+		if($return_code<2) {
+			$return_code=2;
+			$state='CRITICAL';
+		}
+		$critical_count++;
+	}
+}
+
+my $message = '';
+if(length $critical ne 0) {
+	$message = substr($critical,0,-2);
+}
+if(length $warning ne 0) {
+	$message .= (length $message eq 0 ? '':' / ' ).substr($warning,0,-2);
+}
+if($return_code eq 0) {
+	$message = 'all expirations date are in a far far future ...';
+}
+print 'GANDI '.$state.' - '.$message.'|critical='.$critical_count.';warning='.$warning_count."\n";
+exit $return_code;

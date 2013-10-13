@@ -1,0 +1,30 @@
+#!/bin/bash
+
+source /usr/lib/nagios/plugins/utils.sh
+
+if [ $(id -un) != 'zimbra' ]
+then
+	echo "ERROR - Must be run under zimbra user"
+	exit $STATE_UNKNOWN
+fi
+
+last_incr=$(date --date "$(/opt/zimbra/bin/zmbackupquery  | egrep -B 2 "Status:.*completed" | egrep -B 1 "Type:.*incremental" | head -n 1 | cut -d '-' -f 2 | sed 's@\(....\)\(..\)\(..\)\.\(..\)\(..\)\(..\).*@\1-\2-\3 \4:\5:\6@')" +%s)
+last_full=$(date --date "$(/opt/zimbra/bin/zmbackupquery  | egrep -B 2 "Status:.*completed" | egrep -B 1 "Type:.*full" | head -n 1 | cut -d '-' -f 2 | sed 's@\(....\)\(..\)\(..\)\.\(..\)\(..\)\(..\).*@\1-\2-\3 \4:\5:\6@')" +%s)
+now=$(date +%s)
+
+full_age=$(((${now}-${last_full})/86400))
+incr_age=$(((${now}-${last_incr})/86400))
+
+CODE_RETOUR=$STATE_OK
+STATUS=OK
+
+MESSAGE="Last full backup is $full_age days old / Last incremental backup is $incr_age days old"
+
+if [ $full_age -gt 7 -o $incr_age -gt 1 ]
+then
+	CODE_RETOUR=$STATE_CRITICAL
+	STATUS='CRITICAL'
+fi
+
+echo "$STATUS - $MESSAGE"
+exit $CODE_RETOUR

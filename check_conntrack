@@ -1,0 +1,153 @@
+#!/usr/bin/perl -wT
+#
+# check_conntrack - nagios plugin
+#
+# Copyright (c) 2014 Denis Sacchet
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use strict;
+use Getopt::Long;
+use vars qw($opt_V $opt_h $opt_w $opt_c $opt_E $PROGNAME);
+use lib "/usr/lib/nagios/plugins" ;
+use utils qw(%ERRORS);
+
+use POSIX;
+
+$PROGNAME = "check_conntrack";
+
+$ENV{'PATH'}='';
+$ENV{'BASH_ENV'}='';
+$ENV{'ENV'}='';
+
+my $warning=80;
+my $critical=90;
+
+sub print_usage () {
+	print "Usage: $PROGNAME [-E] [-w <warn>] [-c <crit>]\n";
+}
+
+sub print_help () {
+	print "Copyright (c) 2014 Denis Sacchet
+
+This plugin reports the number of entries in the conntrack table. If
+conntrack is disabled on the system, it will report OK except if you
+specify it must be enabled
+
+You may invoke this script with elevated privileges or through sudo
+
+";
+	print_usage();
+	print "
+-E, --conntrack-enabled
+Conntrack must be enabled on this system, report CRITICAL if not
+-w, --warning=INTEGER
+Percentage of fullfilment of the conntrack table above which a WARNING status will result
+Default value : $warning
+-c, --critical=INTEGER
+Percentage of fullfilment of the conntrack table above which a CRITICAL status will result
+Default value : $critical
+
+";
+}
+
+Getopt::Long::Configure('bundling');
+GetOptions
+	("h"   => \$opt_h, "help"       => \$opt_h,
+	"w=s" => \$opt_w, "warning=s"  => \$opt_w,
+	"c=s" => \$opt_c, "critical=s" => \$opt_c,
+	"E" => \$opt_E, "conntrack-enabled" => \$opt_E);
+
+if ($opt_h) {print_help(); exit $ERRORS{'OK'};}
+
+if (! -e '/proc/net/ip_conntrack' && $opt_E) {
+	print "CRITICAL: conntrack is not enable but must be\n";
+	exit $ERRORS{'CRITICAL'};
+}
+if (! -e '/proc/net/ip_conntrack' && ! $opt_E) {
+	print "OK: conntrack is not enable and it is fine\n";
+	exit $ERRORS{'OK'};
+}
+
+if($opt_w) {
+	if($opt_w =~ /([0-9]{1,2}|100)+/) {
+		$warning=$opt_w+0;
+	} else {
+		print("UNKNOWN: Invalid warning threshold: $opt_w\n");
+		exit $ERRORS{'UNKNOWN'};
+	}
+}
+
+if($opt_c) {
+	if($opt_c =~ /([0-9]{1,2}|100)+/) {
+		$critical=$opt_c+0;
+	} else {
+		print("UNKNOWN: Invalid critical threshold: $opt_c\n");
+		exit $ERRORS{'UNKNOWN'};
+	}
+}
+
+if($critical < $warning) {
+	print("UNKNOWN: critical threshold must be greater or equal to warning threshold\n");
+	exit $ERRORS{'UNKNOWN'};
+}
+
+if( ! open (FILE, '/proc/sys/net/ipv4/netfilter/ip_conntrack_max') ) {
+	print "UNKNOWN: Unable to open '/proc/sys/net/ipv4/netfilter/ip_conntrack_max'\n";
+	exit $ERRORS{'UNKNOWN'};
+}
+my $maximum_count=<FILE>;
+if($maximum_count=~/^(\d+)/) {
+	$maximum_count=$1;
+} else {
+	print "UNKNOWN: '/proc/sys/net/ipv4/netfilter/ip_conntrack_max' doesn't contain an integer !!!!!\n";
+	exit $ERRORS{'UNKNOWN'};
+}
+close FILE;
+
+if ( ! open (FILE,'/proc/net/ip_conntrack') ) {
+        print "UNKNOWN: Unable to open '/proc/net/ip_conntrack'\n";
+        exit $ERRORS{'UNKNOWN'};
+}
+
+while (<FILE>) {};
+my $count = $.;
+close FILE;
+
+my $current_percent=100*$count/$maximum_count;
+
+my $warning_count=floor($warning*$maximum_count/100);
+my $critical_count=floor($critical*$maximum_count/100);
+
+my $status;
+my $message;
+my $stats = sprintf("(%d on %d / %0.2f%%)",$count,$maximum_count,$current_percent);
+my $perfdata = sprintf("conntrack_count=%d;%d;%d;0;%d conntrack_percentage=%0.2f%%;%d;%d",$count,$warning_count,$critical_count,$maximum_count,$current_percent,$warning,$critical);
+
+if($current_percent >= 0 && $current_percent < $warning) {
+	$status='OK';
+	$message="All is ok";
+} elsif ($current_percent >= $warning && $current_percent < $critical) {
+	$status='WARNING';
+	$message="The number of entries in conntrack is warning";
+} elsif ($current_percent >= $critical && $current_percent <= 100) {
+	$status='CRITICAL';
+	$message="The number of entries in conntrack is critical";
+} else {
+	$status='UNKNOWN';
+	$message='The percentage calculated is outside normal range';
+}
+
+print "$status: $message $stats | $perfdata\n";
+exit $ERRORS{$status};

@@ -155,13 +155,24 @@ close FILE;
 
 my $multiplier;
 my $status='OK';
+my $memory_total;
+my $memory_free;
+my $memory_used;
+my $memory_current_value;
+my $memory_message;
+my $memory_perfdata;
+my $swap_total;
+my $swap_free;
+my $swap_used;
+my $swap_current_value;
+my $swap_message;
+my $swap_perfdata;
 
 if($opt_m) {
-	my $memory_total=$values{MemTotal};
-	my $memory_free=$values{MemFree};
-	my $memory_used=$values{MemTotal}-$values{MemFree};
-	my $current_value;
-	my $memory_message="memory usage is ok";
+	$memory_total=$values{MemTotal};
+	$memory_free=$values{MemFree};
+	$memory_used=$values{MemTotal}-$values{MemFree};
+	$memory_message="Memory usage is ok";
 
 	if($memory_thresholds{warning}{raw_unit} eq "%") {
 		$memory_thresholds{warning}{final_value}=$memory_thresholds{warning}{raw_value}*$memory_total/100;
@@ -176,17 +187,17 @@ if($opt_m) {
 	}
 
 	if($memory_thresholds{warning}{type} eq "f") {
-		$current_value=$memory_free;
+		$memory_current_value=$memory_free;
 	} else {
-		$current_value=$memory_used;
+		$memory_current_value=$memory_used;
 	}
 	if($memory_thresholds{warning}{way} eq "<") {
-		if($current_value < $memory_thresholds{warning}{final_value}) {
+		if($memory_current_value < $memory_thresholds{warning}{final_value}) {
 			$status="WARNING";
 			$memory_message="Memory usage is warning"
 		}
 	} else {
-		if($current_value > $memory_thresholds{warning}{final_value}) {
+		if($memory_current_value > $memory_thresholds{warning}{final_value}) {
 			$status="WARNING";
 			$memory_message="Memory usage is warning"
 		}
@@ -205,28 +216,32 @@ if($opt_m) {
 	}
 
 	if($memory_thresholds{critical}{type} eq "f") {
-		$current_value=$memory_free;
+		$memory_current_value=$memory_free;
 	} else {
-		$current_value=$memory_used;
+		$memory_current_value=$memory_used;
 	}
 	if($memory_thresholds{critical}{way} eq "<") {
-		if($current_value < $memory_thresholds{critical}{final_value}) {
+		if($memory_current_value < $memory_thresholds{critical}{final_value}) {
 			$status="CRITICAL";
 			$memory_message="Memory usage is critical"
 		}
 	} else {
-		if($current_value > $memory_thresholds{critical}{final_value}) {
+		if($memory_current_value > $memory_thresholds{critical}{final_value}) {
 			$status="CRITICAL";
 			$memory_message="Memory usage is critical"
 		}
 	}
-	print "$status - $memory_message\n";
-	print "memory total : $memory_total / memory free : $memory_free / memory used : $memory_used / current_value : $current_value / warning value : $memory_thresholds{warning}{final_value} / critical value : $memory_thresholds{critical}{final_value}\n";
+
+    $memory_perfdata = sprintf("mem_free=%dk;%d;%d;0;%d buffers=%dk cached=%dk",$values{MemFree},$memory_thresholds{warning}{final_value},$memory_thresholds{critical}{final_value},$values{MemTotal},$values{Buffers},$values{Cached});
+
+
 }
 
 if($opt_s) {
-	my $swap_total=$values{SwapTotal};
-	my $swap_free=$values{SwapFree};
+	$swap_total=$values{SwapTotal};
+	$swap_free=$values{SwapFree};
+	$swap_used=$swap_total-$swap_free;
+    $swap_message="Swap usage is ok";
 
 	if($swap_thresholds{warning}{raw_unit} eq "%") {
 		$swap_thresholds{warning}{final_value}=$swap_thresholds{warning}{raw_value}*$swap_total/100;
@@ -239,6 +254,23 @@ if($opt_s) {
 		}
 		$swap_thresholds{warning}{final_value}=$swap_thresholds{warning}{raw_value}*$multiplier;
 	}
+	if($swap_thresholds{warning}{type} eq "f") {
+		$swap_current_value=$swap_free;
+	} else {
+		$swap_current_value=$swap_used;
+	}
+	if($swap_thresholds{warning}{way} eq "<") {
+		if($swap_current_value < $swap_thresholds{warning}{final_value}) {
+			$status="WARNING";
+			$swap_message="Swap usage is warning"
+		}
+	} else {
+		if($swap_current_value > $swap_thresholds{warning}{final_value}) {
+			$status="WARNING";
+			$swap_message="Swap usage is warning"
+		}
+	}
+
 
 	if($swap_thresholds{critical}{raw_unit} eq "%") {
 		$swap_thresholds{critical}{final_value}=$swap_thresholds{critical}{raw_value}*$swap_total/100;
@@ -251,54 +283,31 @@ if($opt_s) {
 		}
 		$swap_thresholds{critical}{final_value}=$swap_thresholds{critical}{raw_value}*$multiplier;
 	}
-	dump(%swap_thresholds);
+	if($swap_thresholds{critical}{type} eq "f") {
+		$swap_current_value=$swap_free;
+	} else {
+		$swap_current_value=$swap_used;
+	}
+	if($swap_thresholds{critical}{way} eq "<") {
+		if($swap_current_value < $swap_thresholds{critical}{final_value}) {
+			$status="CRITICAL";
+			$swap_message="Swap usage is critical"
+		}
+	} else {
+		if($swap_current_value > $swap_thresholds{critical}{final_value}) {
+			$status="CRITICAL";
+			$swap_message="Swap usage is critical"
+		}
+	}
+
+    $swap_perfdata = sprintf("swap_free=%dk;%d;%d;0;%d",$values{SwapFree},$swap_thresholds{warning}{final_value},$swap_thresholds{critical}{final_value},$values{SwapTotal});
 }
 
-#if( ! open (FILE, '/proc/sys/net/ipv4/netfilter/ip_mem_max') ) {
-#	print "UNKNOWN: Unable to open '/proc/sys/net/ipv4/netfilter/ip_mem_max'\n";
-#	exit $ERRORS{'UNKNOWN'};
-#}
-#my $maximum_count=<FILE>;
-#if($maximum_count=~/^(\d+)/) {
-#	$maximum_count=$1;
-#} else {
-#	print "UNKNOWN: '/proc/sys/net/ipv4/netfilter/ip_mem_max' doesn't contain an integer !!!!!\n";
-#	exit $ERRORS{'UNKNOWN'};
-#}
-#close FILE;
-#
-#if ( ! open (FILE,'/proc/net/ip_mem') ) {
-#        print "UNKNOWN: Unable to open '/proc/net/ip_mem'\n";
-#        exit $ERRORS{'UNKNOWN'};
-#}
-#
-#while (<FILE>) {};
-#my $count = $.;
-#close FILE;
-#
-#my $current_percent=100*$count/$maximum_count;
-#
-#my $warning_count=floor($warning*$maximum_count/100);
-#my $critical_count=floor($critical*$maximum_count/100);
-#
-#my $status;
-#my $message;
-#my $stats = sprintf("(%d on %d / %0.2f%%)",$count,$maximum_count,$current_percent);
-#my $perfdata = sprintf("mem_count=%d;%d;%d;0;%d mem_percentage=%0.2f%%;%d;%d",$count,$warning_count,$critical_count,$maximum_count,$current_percent,$warning,$critical);
-#
-#if($current_percent >= 0 && $current_percent < $warning) {
-#	$status='OK';
-#	$message="All is ok";
-#} elsif ($current_percent >= $warning && $current_percent < $critical) {
-#	$status='WARNING';
-#	$message="The number of entries in mem is warning";
-#} elsif ($current_percent >= $critical && $current_percent <= 100) {
-#	$status='CRITICAL';
-#	$message="The number of entries in mem is critical";
-#} else {
-#	$status='UNKNOWN';
-#	$message='The percentage calculated is outside normal range';
-#}
-#
-#print "$status: $message $stats | $perfdata\n";
-#exit $ERRORS{$status};
+if($opt_s && $opt_m) {
+    print "$status: $memory_message, $swap_message | $memory_perfdata $swap_perfdata\n";
+} elsif($opt_s) {
+    print "$status: $swap_message | $swap_perfdata\n";
+} else {
+    print "$status: $memory_message | $memory_perfdata\n";
+}
+exit $ERRORS{$status};

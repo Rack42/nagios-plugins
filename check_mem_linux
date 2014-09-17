@@ -19,11 +19,9 @@
 
 use strict;
 use Getopt::Long;
-use vars qw($opt_V $opt_h $opt_m $opt_s $PROGNAME);
+use vars qw($opt_V $opt_h $opt_m $opt_s $opt_C $PROGNAME);
 use lib "/usr/lib/nagios/plugins" ;
 use utils qw(%ERRORS);
-use Data::Dump qw(dump);
-
 
 use POSIX;
 
@@ -34,7 +32,7 @@ $ENV{'BASH_ENV'}='';
 $ENV{'ENV'}='';
 
 sub print_usage () {
-	print "Usage: $PROGNAME [-m|--memory <thresholds>] [-s|--swap <thresholds>]\n";
+	print "Usage: $PROGNAME [-C|--cached-as-free] [-m|--memory <thresholds>] [-s|--swap <thresholds>]\n";
 }
 
 sub print_help () {
@@ -45,28 +43,32 @@ This plugin reports the memory/swap usage
 ";
 	print_usage();
 	print "
+-C, --cached-as-free
+If this option is passed, then we add the amount of cached memory to the
+amount of free memory
+
 -u|-f, --used|--free
 If -u|--used is specified, thresholds are trigger againt used memory,
 else if -f|--free, thresholds are trigger againt used memory
 
--m|--memory [u|f][<|>]INTEGER<unit>,[u|f][<|>]INTEGER<unit>
+-m|--memory [u|f].[lt|gt].INTEGER.<unit>,[u|f].[lt|gt].INTEGER.<unit>
 Check memory usage and report WARNING if <free|used> value is above the first
 specified INTEGER, and CRITICAL above the second INTEGER. You must specify the
 unit
 
--s|--swap [u|f][<|>]INTEGER<unit>,[u|f][<|>]INTEGER<unit>
+-s|--swap [u|f].[lt|gt].INTEGER.<unit>,[u|f].[lt|gt].INTEGER.<unit>
 Check swap usage and report WARNING if <free|used> value is above the first
 specified INTEGER, and CRITICAL above the second INTEGER. You must specify the
 unit
 
 <unit> can be :
-- % for a percent of total memory
-- k for KiloBytes
-- m for MegaBytes
-- g for GigaBytes
+- pct for a percent of total memory
+- KB for KiloBytes
+- MB for MegaBytes
+- GT for GigaBytes
 
 Example :
-$PROGNAME -m f<10%,u>95% -s u>0Kb,f<5%
+$PROGNAME -m f.lt.10.pct,u.gt.95.pct -s u.gt.0.KB,f.lt.5.pct
 
 We will have a warning if
  - free memory is below 10% of total memory
@@ -83,6 +85,7 @@ Getopt::Long::Configure('bundling');
 GetOptions
 	("h"   => \$opt_h, "help"       => \$opt_h,
 	"m=s" => \$opt_m, "memory=s"  => \$opt_m,
+	"C" => \$opt_C, "cached-as-free"  => \$opt_C,
 	"s=s" => \$opt_s, "swap=s" => \$opt_s);
 
 if ($opt_h) {print_help(); exit $ERRORS{'OK'};}
@@ -96,7 +99,7 @@ if(! $opt_m && ! $opt_s) {
 }
 
 if($opt_m) {
-	if($opt_m =~ /^([uf])([<>])([0-9]+)([%kmg]),([uf])([<>])([0-9]+)([%kmg])$/) {
+	if($opt_m =~ /^([uf])\.(lt|gt)\.([0-9]+)\.(pct|KB|MB|GB),([uf])\.(lt|gt)\.([0-9]+)\.(pct|KB|MB|GB)$/) {
 		$memory_thresholds{warning}{type}=$1;
 		$memory_thresholds{warning}{way}=$2;
 		$memory_thresholds{warning}{raw_value}=$3;
@@ -112,7 +115,7 @@ if($opt_m) {
 }
 
 if($opt_s) {
-	if($opt_s =~ /^([uf])([<>])([0-9]+)([%kmg]),([uf])([<>])([0-9]+)([%kmg])$/) {
+	if($opt_s =~ /^([uf])\.(lt|gt)\.([0-9]+)\.(pct|KB|MB|GB),([uf])\.(lt|gt)\.([0-9]+)\.(pct|KB|MB|GB)$/) {
 		$swap_thresholds{warning}{type}=$1;
 		$swap_thresholds{warning}{way}=$2;
 		$swap_thresholds{warning}{raw_value}=$3;
@@ -171,27 +174,30 @@ my $swap_perfdata;
 if($opt_m) {
 	$memory_total=$values{MemTotal};
 	$memory_free=$values{MemFree};
+    if($opt_C) {
+           $memory_free+=$values{Cached};
+    }
 	$memory_used=$values{MemTotal}-$values{MemFree};
 	$memory_message="Memory usage is ok";
 
-	if($memory_thresholds{warning}{raw_unit} eq "%") {
+	if($memory_thresholds{warning}{raw_unit} eq 'pct') {
 		$memory_thresholds{warning}{final_value}=$memory_thresholds{warning}{raw_value}*$memory_total/100;
 	} else {
 		$multiplier=1;
-		if($memory_thresholds{warning}{raw_unit} eq 'm') {
+		if($memory_thresholds{warning}{raw_unit} eq 'MB') {
 			$multiplier=1024;
-		} elsif($memory_thresholds{warning}{raw_unit} eq 'g') {
+		} elsif($memory_thresholds{warning}{raw_unit} eq 'GB') {
 			$multiplier=1024*1024;
 		}
 		$memory_thresholds{warning}{final_value}=$memory_thresholds{warning}{raw_value}*$multiplier;
 	}
 
-	if($memory_thresholds{warning}{type} eq "f") {
+	if($memory_thresholds{warning}{type} eq 'f') {
 		$memory_current_value=$memory_free;
 	} else {
 		$memory_current_value=$memory_used;
 	}
-	if($memory_thresholds{warning}{way} eq "<") {
+	if($memory_thresholds{warning}{way} eq 'lt') {
 		if($memory_current_value < $memory_thresholds{warning}{final_value}) {
 			$status="WARNING";
 			$memory_message="Memory usage is warning"
@@ -203,24 +209,24 @@ if($opt_m) {
 		}
 	}
 
-	if($memory_thresholds{critical}{raw_unit} eq "%") {
+	if($memory_thresholds{critical}{raw_unit} eq 'pct') {
 		$memory_thresholds{critical}{final_value}=$memory_thresholds{critical}{raw_value}*$memory_total/100;
 	} else {
 		$multiplier=1;
-		if($memory_thresholds{critical}{raw_unit} eq 'm') {
+		if($memory_thresholds{critical}{raw_unit} eq 'MB') {
 			$multiplier=1024;
-		} elsif($memory_thresholds{critical}{raw_unit} eq 'g') {
+		} elsif($memory_thresholds{critical}{raw_unit} eq 'GB') {
 			$multiplier=1024*1024;
 		}
 		$memory_thresholds{critical}{final_value}=$memory_thresholds{critical}{raw_value}*$multiplier;
 	}
 
-	if($memory_thresholds{critical}{type} eq "f") {
+	if($memory_thresholds{critical}{type} eq 'f') {
 		$memory_current_value=$memory_free;
 	} else {
 		$memory_current_value=$memory_used;
 	}
-	if($memory_thresholds{critical}{way} eq "<") {
+	if($memory_thresholds{critical}{way} eq 'lt') {
 		if($memory_current_value < $memory_thresholds{critical}{final_value}) {
 			$status="CRITICAL";
 			$memory_message="Memory usage is critical"
@@ -243,23 +249,23 @@ if($opt_s) {
 	$swap_used=$swap_total-$swap_free;
     $swap_message="Swap usage is ok";
 
-	if($swap_thresholds{warning}{raw_unit} eq "%") {
+	if($swap_thresholds{warning}{raw_unit} eq 'pct') {
 		$swap_thresholds{warning}{final_value}=$swap_thresholds{warning}{raw_value}*$swap_total/100;
 	} else {
 		$multiplier=1;
-		if($swap_thresholds{warning}{raw_unit} eq 'm') {
+		if($swap_thresholds{warning}{raw_unit} eq 'MB') {
 			$multiplier=1024;
-		} elsif($swap_thresholds{warning}{raw_unit} eq 'g') {
+		} elsif($swap_thresholds{warning}{raw_unit} eq 'GB') {
 			$multiplier=1024*1024;
 		}
 		$swap_thresholds{warning}{final_value}=$swap_thresholds{warning}{raw_value}*$multiplier;
 	}
-	if($swap_thresholds{warning}{type} eq "f") {
+	if($swap_thresholds{warning}{type} eq 'f') {
 		$swap_current_value=$swap_free;
 	} else {
 		$swap_current_value=$swap_used;
 	}
-	if($swap_thresholds{warning}{way} eq "<") {
+	if($swap_thresholds{warning}{way} eq 'lt') {
 		if($swap_current_value < $swap_thresholds{warning}{final_value}) {
 			$status="WARNING";
 			$swap_message="Swap usage is warning"
@@ -272,23 +278,23 @@ if($opt_s) {
 	}
 
 
-	if($swap_thresholds{critical}{raw_unit} eq "%") {
+	if($swap_thresholds{critical}{raw_unit} eq 'pct') {
 		$swap_thresholds{critical}{final_value}=$swap_thresholds{critical}{raw_value}*$swap_total/100;
 	} else {
 		$multiplier=1;
-		if($swap_thresholds{critical}{raw_unit} eq 'm') {
+		if($swap_thresholds{critical}{raw_unit} eq 'MB') {
 			$multiplier=1024;
-		} elsif($swap_thresholds{critical}{raw_unit} eq 'g') {
+		} elsif($swap_thresholds{critical}{raw_unit} eq 'GB') {
 			$multiplier=1024*1024;
 		}
 		$swap_thresholds{critical}{final_value}=$swap_thresholds{critical}{raw_value}*$multiplier;
 	}
-	if($swap_thresholds{critical}{type} eq "f") {
+	if($swap_thresholds{critical}{type} eq 'f') {
 		$swap_current_value=$swap_free;
 	} else {
 		$swap_current_value=$swap_used;
 	}
-	if($swap_thresholds{critical}{way} eq "<") {
+	if($swap_thresholds{critical}{way} eq 'lt') {
 		if($swap_current_value < $swap_thresholds{critical}{final_value}) {
 			$status="CRITICAL";
 			$swap_message="Swap usage is critical"

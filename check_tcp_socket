@@ -1,0 +1,129 @@
+#!/usr/bin/perl
+#
+# check_socket - nagios plugin
+#
+# Copyright (c) 2014 Denis Sacchet
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use strict;
+use Getopt::Long;
+use vars qw($opt_4 $opt_6 $opt_w $opt_c $opt_h $opt_m $PROGNAME);
+use lib "/usr/lib/nagios/plugins" ;
+use utils qw(%ERRORS);
+
+use POSIX;
+
+$PROGNAME = "check_mem_linux";
+
+$ENV{'PATH'}='';
+$ENV{'BASH_ENV'}='';
+$ENV{'ENV'}='';
+
+my @states = qw / ESTABLISHED SYN_SENT SYN_RECV FIN_WAIT1 FIN_WAIT2 TIME_WAIT CLOSE CLOSE_WAIT LAST_ACK LISTEN CLOSING /;
+my @counters = qw / 0 0 0 0 0 0 0 0 0 0 0 /;
+
+sub print_usage () {
+	print "Usage: $PROGNAME [-4|-6]\n";
+}
+
+sub print_help () {
+	print "Copyright (c) 2014 Denis Sacchet
+
+This plugin reports metrics on ipv4 or ipv6 sockets
+
+";
+	print_usage();
+	print "
+-4, --ipv4
+Return metrics about ipv4 TCP sockets [default]
+
+-6, --ipv6
+Return metrics about ipv6 TCP sockets
+
+### TODO : implement warning/critical threshold
+
+-w, --warning [STATE].[lt|gt].<integer>
+Return warning state if the value of the given STATE match the test
+
+-c, --critical [STATE].[lt|gt].<integer>
+Return critical state if the value of the given STATE match the test
+
+List of state :
+";
+
+	foreach(@states) {
+		print " - $_\n";
+	}
+	print "
+
+Example :
+$PROGNAME -w CLOSING.gt.1024 -c CLOSING.gt.2048
+
+";
+}
+
+if(! -e '/proc/net/tcp') {
+}
+
+Getopt::Long::Configure('bundling');
+GetOptions
+	("h"   => \$opt_h, "help"       => \$opt_h,
+	"4" => \$opt_4, "ipv4"  => \$opt_4,
+	"6" => \$opt_6, "ipv6"  => \$opt_6,
+	"w=s" => \$opt_c, "warning=s" => \$opt_c,
+	"c=s" => \$opt_w, "critical=s" => \$opt_w);
+
+if ($opt_h) {print_help(); exit $ERRORS{'OK'};}
+
+if($opt_4 && $opt_6) {
+	print("UNKNOWN: You must specify only one of -4|ipv4 and -6|--ipv6\n");
+	exit $ERRORS{'UNKNOWN'};
+}
+
+if(! $opt_4 && ! $opt_6) {
+	$opt_4=1;
+}
+
+my $file;
+if($opt_4) {
+	$file='/proc/net/tcp';
+} else {
+	$file='/proc/net/tcp6';
+}
+
+my $netstat;
+
+if( ! open($netstat, $file) ) {
+        print "UNKNOWN: Unable to open '$file'\n";
+        exit $ERRORS{'UNKNOWN'};
+}
+
+while(<$netstat>)  {   
+	chomp;
+	my @fields = split / +/;
+	next if($fields[1] eq "sl");
+	my $type = hex("0x".$fields[4])-1;
+	$counters[$type]++;
+}
+
+close $netstat;
+
+my @perfdata;
+for(my $i=0;$i<scalar(@counters);$i++) {
+	$perfdata[$i]='\''.lc($states[$i]).'\'='.$counters[$i];
+}
+
+print 'OK | '.join(' ',@perfdata)."\n";
+exit $ERRORS{'OK'};

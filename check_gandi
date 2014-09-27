@@ -19,7 +19,7 @@
 
 use strict;
 use Getopt::Long;
-use vars qw($opt_V $opt_h $opt_w $opt_c $opt_a $PROGNAME);
+use vars qw($opt_V $opt_h $opt_w $opt_c $opt_a $opt_e $PROGNAME);
 use lib "/usr/lib/nagios/plugins" ;
 use utils qw(%ERRORS &print_revision &support &usage);
 
@@ -54,6 +54,8 @@ Api Key of Gandi accound on which you want to check expiration date
 Number of remaining days before expiration date below which a WARNING status will result
 -c, --critical=INTEGER
 Number of remaining days before expiration date below which a CRITICAL status will result
+-e, --exclude=FILE
+File containing a list of domain name (one per line) to not take into account
 
 ";
 }
@@ -63,6 +65,7 @@ GetOptions
 	("h"   => \$opt_h, "help"       => \$opt_h,
 	"w=s" => \$opt_w, "warning=s"  => \$opt_w,
 	"c=s" => \$opt_c, "critical=s" => \$opt_c,
+	"e=s" => \$opt_e, "exclude=s" => \$opt_e,
 	"a=s" => \$opt_a, "apikey=s" => \$opt_a);
 
 if ($opt_h) {print_help(); exit $ERRORS{'OK'};}
@@ -77,6 +80,25 @@ my $warning_threshold = $1 if ($opt_w =~ /([0-9]{1,2}|100)+/);
 ($opt_c) || usage("Critical threshold not specified\n");
 my $critical_threshold = $1 if ($opt_c =~ /([0-9]{1,2}|100)/);
 ($critical_threshold) || usage("Invalid critical threshold: $opt_c\n");
+
+if($opt_e && ! -f $opt_e) {
+	print("UNKNOWN: The exclude file '$opt_e' doesn't exist\n");
+	exit $ERRORS{'UNKNOWN'};
+}
+
+my @excludes;
+if($opt_e) {
+	if( ! open (FILE, $opt_e) ) {
+		print "UNKNOWN: Unable to open '$opt_e'\n";
+		exit $ERRORS{'UNKNOWN'};
+	}
+	while(<FILE>) {
+		chomp;
+		next if(!/^[a-zA-Z0-9\.]+$/);
+		push(@excludes,$_);
+	}
+}
+close(FILE);
 
 my $api = RPC::XML::Client->new('https://rpc.gandi.net/xmlrpc/');
 
@@ -95,6 +117,7 @@ my $now=DateTime->now;
 
 foreach (@{$list->value}) {
 	my $fqdn=$_->{'fqdn'};
+	next if($fqdn ~~ @excludes);
 	my $date=$_->{'date_registry_end'};
 
 	my $dt = DateTime->new(

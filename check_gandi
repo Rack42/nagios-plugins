@@ -94,7 +94,7 @@ if($opt_e) {
 	}
 	while(<FILE>) {
 		chomp;
-		next if(!/^[a-zA-Z0-9\.]+$/);
+		next if(!/^[a-zA-Z0-9\.-]+$/);
 		push(@excludes,$_);
 	}
 }

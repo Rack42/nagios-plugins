@@ -1,0 +1,141 @@
+#!/usr/bin/python
+# TODO : comments
+
+import os
+import re
+import sys
+import stat
+import time
+import commands
+import optparse
+
+parser = optparse.OptionParser()
+parser.add_option('-v', '', 
+    action="count", dest="verbose",
+    help="increase verbosity level (0-3)")
+parser.add_option('-w', '--warning', 
+    action="store", dest="warning", default="1",
+    help="days to warn at")
+parser.add_option('-c', '--critical', 
+    action="store", dest="critical", default="2",
+    help="days to critical at")
+
+opts, args = parser.parse_args(sys.argv[1:])
+_verbose = opts.verbose
+
+def debug(msg):
+	global _verbose
+	if _verbose >= 3:
+		sys.stdout.write('DEBUG: %s\n' % msg)
+
+def ok(msg):
+	sys.stdout.write('OK: %s\n' % msg)
+	sys.exit(0)
+	
+def warning(msg):
+	sys.stdout.write('WARNING: %s\n' % msg)
+	sys.exit(1)
+
+def critical(msg):
+	sys.stdout.write('CRITICAL: %s\n' % msg)
+	sys.exit(2)
+
+def unknown(msg):
+	sys.stdout.write('UNKNOWN: %s\n' % msg)
+	sys.exit(3)
+
+debug('Options: %r' % opts)
+
+warnings = []
+criticals = []
+oks = []
+conffile = open("/etc/dirvish/master.conf", "r")
+
+def getVaultLastSucceeded(bank, vault):
+	newestEpoch = None 
+	newestDir = None
+
+	vaultdir = os.path.join(bank, vault)
+	dirs = os.listdir(vaultdir)
+
+	for dir in dirs:
+		if dir == 'dirvish':
+			continue
+
+		st = os.stat(os.path.join(vaultdir, dir))
+		if not st[stat.ST_MODE] & stat.S_IXOTH:
+			debug('%s/%s not other-executable, failed backup' % (vaultdir, dir))
+			continue
+
+		epoch = os.stat(os.path.join(vaultdir,dir)).st_mtime
+		if epoch > newestEpoch:
+			newestEpoch = epoch
+			newestDir = dir
+	return newestDir
+
+
+banks = []
+debutbank=0
+
+#On recupere la liste des banks actives dans le fichier de config
+for ligne in conffile:
+	if re.match(".*bank:.*",ligne):
+		debutbank=1
+		continue
+	if re.match(".*exclude:.*",ligne):	
+		break
+	if re.match(".*Runall:.*",ligne):	
+		break
+ 	if (not re.match("^[\s]*#",ligne) and debutbank == 1):
+		banks.append(ligne.strip())
+
+if not banks:
+	unknown('Probleme de configuration')
+
+for bank in banks:
+	vaults = []
+	vaults = os.listdir(bank)
+
+	for vault in vaults:
+		vault=vault.strip()
+		vaultfound=0
+
+		#On verifie que le vault est actif dans la config
+		conffile.seek(0)
+		for i in conffile:
+			if re.search("^[\s]*#",i):
+				continue
+			if re.search(vault,i):
+				vaultfound=1
+				break
+
+		if vaultfound == 0:
+			continue
+
+		#print bank,vault
+		dir = getVaultLastSucceeded(bank, vault)
+		if dir is None:
+			msg = "vault %s n'a pas ete init" % (vault)
+			criticals.append(msg)
+			continue
+	
+		epoch = os.stat(os.path.join(bank,vault,dir)).st_mtime
+		now = time.time()
+		days = (now - epoch) / (60 * 60 * 24)
+		#print "Epoch",time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.localtime(epoch))
+		#print "Now",time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.localtime(now))
+		msg = "vault %s is %.2f days old" % (vault, days)
+		if days > float(opts.critical):
+			criticals.append(msg)
+		elif days > float(opts.warning):
+			warnings.append(msg)
+		else:
+			oks.append(msg)
+
+if criticals:
+    critical("%d vaults critical: %s" % (len(criticals), ", ".join(criticals)))
+elif warnings:
+    warning("%d vaults warning: %s" % (len(warnings), ", ".join(warnings)))
+else:
+    ok("%d vaults ok " % (len(oks)))
+    #ok("%d vaults ok: %s" % (len(oks), ", ".join(oks)))

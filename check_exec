@@ -1,0 +1,65 @@
+#! /usr/bin/perl
+# TODO : comments + standard lib like other perl nagios plugins
+
+use strict;
+use Getopt::Long;
+use POSIX qw(strftime);
+
+# Script utilisé par nrpe pour vérifier que l'on fait des commandes régulièrement et qu'il n'y a pas d'erreur
+
+my ($fic_error, $fic_trace, $critical);
+
+GetOptions (
+            "error=s" => \$fic_error,
+            "trace=s" => \$fic_trace,
+            "critical|c=i" => \$critical,
+           );
+
+if (not defined $fic_error) {
+    print "Vous devez spécifier le fichier d'erreur\n";
+    exit(2);
+}
+
+if (not defined $fic_trace) {
+    print "Vous devez spécifier le fichier de trace\n";
+    exit(2);
+}
+
+# Par défaut une alerte si il n'y a pas eu d execution depuis 24 heures
+$critical ||= 24;
+
+unless (-f $fic_error) {
+    print "UNKWOWN : Impossible de trouver le fichier $fic_error\n";
+    exit(-1);
+}
+
+unless (-f $fic_trace) {
+    print "UNKWOWN : Impossible de trouver le fichier $fic_trace\n";
+    exit(-1);
+}
+
+my $size_error = (-s $fic_error);
+
+if ($size_error != 0) {
+    my @bla = `cat $fic_error`;
+    print "CRITICAL : ", join(', ', @bla), "\n";
+    exit(2);
+}
+
+# Ok pas d'erreur
+# On verifie que le fichier stdout date de moins de $critical heures
+
+my $mtime = (stat($fic_trace)) [9];
+
+my $diff = time()-$mtime;
+
+if ( ($diff/3600) >= $critical) {
+    print "CRITICAL : Pas d execution depuis les $critical dernieres heures\n";
+    exit(2);
+} else {
+    my @bla = `cat $fic_trace`;	
+    my $last_exec = strftime('%d/%m/%Y %H:%M:%S', localtime($mtime));
+    #print "OK : Derniere execution le $last_exec\n";
+    print "Execution le  $last_exec : ", join(', ', @bla), "\n";
+    exit(0);
+}

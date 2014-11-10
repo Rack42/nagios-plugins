@@ -19,13 +19,13 @@
 
 use strict;
 use Getopt::Long;
-use vars qw($opt_4 $opt_6 $opt_w $opt_c $opt_h $opt_m $PROGNAME);
+use vars qw($opt_4 $opt_6 $opt_w $opt_c $opt_h $opt_m $opt_l $PROGNAME);
 use lib "/usr/lib/nagios/plugins" ;
 use utils qw(%ERRORS);
 
 use POSIX;
 
-$PROGNAME = "check_mem_linux";
+$PROGNAME = "check_tcp_socket";
 
 $ENV{'PATH'}='';
 $ENV{'BASH_ENV'}='';
@@ -52,6 +52,8 @@ Return metrics about ipv4 TCP sockets [default]
 -6, --ipv6
 Return metrics about ipv6 TCP sockets
 
+-l, --listen <ip>:<port>
+
 ### TODO : implement warning/critical threshold
 
 -w, --warning [STATE].[lt|gt].<integer>
@@ -68,8 +70,11 @@ List of state :
 	}
 	print "
 
-Example :
+Examples :
+=> Raise a warning or a critical on the number of sockets in CLOSING state
 $PROGNAME -w CLOSING.gt.1024 -c CLOSING.gt.2048
+=> Verify that a program is listenning on port 22 (certainly a ssh server)
+$PROGNAME -l 0.0.0.0:22
 
 ";
 }
@@ -81,6 +86,7 @@ Getopt::Long::Configure('bundling');
 GetOptions
 	("h"   => \$opt_h, "help"       => \$opt_h,
 	"4" => \$opt_4, "ipv4"  => \$opt_4,
+	"l=s" => \$opt_l, "listen=s"  => \$opt_l,
 	"6" => \$opt_6, "ipv6"  => \$opt_6,
 	"w=s" => \$opt_c, "warning=s" => \$opt_c,
 	"c=s" => \$opt_w, "critical=s" => \$opt_w);
@@ -103,6 +109,18 @@ if($opt_4) {
 	$file='/proc/net/tcp6';
 }
 
+if($opt_l && ($opt_w || $opt_c)) {
+	print("UNKNOWN: Mode -l|--listen and mode -w|--warning|-c|--critial are exclusive, you cannot mix them\n");
+	exit $ERRORS{'UNKNOWN'};
+}
+
+my $found_listening_socket=0;
+my $listening_address;
+my $listening_port;
+if($opt_l) {
+    ($listening_address,$listening_port) = split /:/,$opt_l;
+}
+
 my $netstat;
 
 if( ! open($netstat, $file) ) {
@@ -114,7 +132,27 @@ while(<$netstat>)  {
 	chomp;
 	my @fields = split / +/;
 	next if($fields[1] eq "sl");
+
+    # Get type
 	my $type = hex("0x".$fields[4])-1;
+
+    # Get local address and port
+    my ($local_address,$local_port) = split /:/, @fields[2];
+    $local_port=hex("0x".$local_port);
+    $local_address=hex("0x".substr($local_address,6,2)).".".hex("0x".substr($local_address,4,2)).".".hex("0x".substr($local_address,2,2)).".".hex("0x".substr($local_address,0,2));
+
+    # Verifiy if we match
+    if($opt_l) {
+        if($local_port eq $listening_port && $local_address eq $listening_address) {
+            $found_listening_socket=1;
+        }
+    }
+
+    # Get remote address and port
+    my ($remote_address,$remote_port) = split /:/, @fields[3];
+    $remote_port=hex("0x".$remote_port);
+    $remote_address=hex("0x".substr($remote_address,6,2)).".".hex("0x".substr($remote_address,4,2)).".".hex("0x".substr($remote_address,2,2)).".".hex("0x".substr($remote_address,0,2));
+
 	$counters[$type]++;
 }
 
@@ -125,5 +163,15 @@ for(my $i=0;$i<scalar(@counters);$i++) {
 	$perfdata[$i]='\''.lc($states[$i]).'\'='.$counters[$i];
 }
 
-print 'OK | '.join(' ',@perfdata)."\n";
-exit $ERRORS{'OK'};
+if($opt_l) {
+    if($found_listening_socket eq 1) {
+        print "OK - A socket is listening on $opt_l\n";;
+        exit $ERRORS{'OK'};
+    } else {
+        print "CRITICAL - No listening socket on $opt_l\n";
+        exit $ERRORS{'CRITICAL'};
+    }
+} else {
+    print 'OK | '.join(' ',@perfdata)."\n";
+    exit $ERRORS{'OK'};
+}

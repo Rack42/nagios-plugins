@@ -1,0 +1,204 @@
+#!/usr/bin/perl -wT
+#
+# check_gandi - nagios plugin
+#
+# Copyright (C) 2014 Denis Sacchet
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use strict;
+use Getopt::Long;
+use vars qw($opt_V $opt_h $opt_w $opt_c $opt_a $opt_e $PROGNAME);
+use lib "/usr/lib/nagios/plugins" ;
+use utils qw(%ERRORS &print_revision &support &usage);
+
+use POSIX;
+use RPC::XML;
+use RPC::XML::Client;
+use DateTime;
+
+$PROGNAME = "check_gandi";
+
+$ENV{'PATH'}='';
+$ENV{'BASH_ENV'}='';
+$ENV{'ENV'}='';
+
+sub print_usage () {
+	print "Usage: $PROGNAME -a <apikey> -w <warn> -c <crit>\n";
+}
+
+sub print_help () {
+	print "Copyright (c) 2016 Rack42 / Denis Sacchet
+
+This plugin reports ssl certificates hich will expire in a near future in a
+specific Gandi account. You must activate API on your Gandi accound, and
+get an API Key.
+
+";
+	print_usage();
+	print "
+-a, --apikey=APIKEY
+Api Key of Gandi accound on which you want to check expiration date
+-w, --warning=INTEGER
+Number of remaining days before expiration date below which a WARNING status will result
+-c, --critical=INTEGER
+Number of remaining days before expiration date below which a CRITICAL status will result
+-e, --exclude=FILE
+File containing a list of domain name (one per line) to not take into account
+
+";
+}
+
+Getopt::Long::Configure('bundling');
+GetOptions
+	("h"   => \$opt_h, "help"       => \$opt_h,
+	"w=s" => \$opt_w, "warning=s"  => \$opt_w,
+	"c=s" => \$opt_c, "critical=s" => \$opt_c,
+	"e=s" => \$opt_e, "exclude=s" => \$opt_e,
+	"a=s" => \$opt_a, "apikey=s" => \$opt_a);
+
+if ($opt_h) {print_help(); exit $ERRORS{'OK'};}
+
+($opt_a) || usage("API Key not specified\n");
+my $apikey = $opt_a;
+
+($opt_w) || usage("Warning threshold not specified\n");
+my $warning_threshold = $1 if ($opt_w =~ /([0-9]{1,2}|100)+/);
+($warning_threshold) || usage("Invalid warning threshold: $opt_w\n");
+
+($opt_c) || usage("Critical threshold not specified\n");
+my $critical_threshold = $1 if ($opt_c =~ /([0-9]{1,2}|100)/);
+($critical_threshold) || usage("Invalid critical threshold: $opt_c\n");
+
+if($opt_e && ! -f $opt_e) {
+	print("UNKNOWN: The exclude file '$opt_e' doesn't exist\n");
+	exit $ERRORS{'UNKNOWN'};
+}
+
+my @excludes;
+if($opt_e) {
+	if( ! open (FILE, $opt_e) ) {
+		print "UNKNOWN: Unable to open '$opt_e'\n";
+		exit $ERRORS{'UNKNOWN'};
+	}
+	while(<FILE>) {
+		chomp;
+		next if(!/^[a-zA-Z0-9\.-]+$/);
+		push(@excludes,$_);
+	}
+}
+close(FILE);
+
+my $api = RPC::XML::Client->new('https://rpc.gandi.net/xmlrpc/');
+
+my $warning = '';
+my $critical = '';
+
+my $warning_count = 0;
+my $critical_count = 0;
+
+my $list = $api->send_request( 'cert.list', $apikey );
+
+my $return_code=$ERRORS{'OK'};
+my $state='OK';
+
+my $now=DateTime->now;
+
+my @status_to_ignore = ('revoked', 'replaced');
+my %certs;
+
+foreach (@{$list->value}) {
+	my ($cn,$status,$date);
+	$cn=$_->{'cn'};
+	next if($cn ~~ @excludes);
+	$status=$_->{'status'};
+	next if($status ~~ @status_to_ignore);
+	if($status eq 'pending') {
+		$date='N/A';
+	} else {
+		$date=$_->{'date_end'};
+	}
+	$certs{$cn}{$status}=$date;
+}
+
+foreach my $current_cn_k (keys %certs){
+	my %current_cn = %{$certs{$current_cn_k}};
+	my $date;
+
+	if(defined $current_cn{'expired'} and not defined $current_cn{'valid'} and not defined $current_cn{'pending'}) {
+		$date=$current_cn{'expired'};
+		my $dt = DateTime->new(
+			year =>substr($date,0,4),
+			month =>substr($date,4,2),
+			day =>substr($date,6,2),
+			hour =>substr($date,9,2),
+			minute =>substr($date,12,2),
+			second =>substr($date,15,2),
+			nanosecond => 0,
+			time_zone => 'Europe/Paris',
+		);
+		my $days_to_expiration=ceil(($dt->epoch()-$now->epoch())/86400);
+		$critical.=$current_cn_k.' (Expired since '.($days_to_expiration*-1).'i days), ';
+		if($return_code<$ERRORS{'CRITICAL'}) {
+			$return_code=$ERRORS{'CRITICAL'};
+			$state='CRITICAL';
+		}
+		$critical_count++;
+	} elsif(defined $current_cn{'expired'} and not defined $current_cn{'valid'} and defined $current_cn{'pending'}) {
+		$date=$current_cn{'expired'};
+		my $dt = DateTime->new(
+			year =>substr($date,0,4),
+			month =>substr($date,4,2),
+			day =>substr($date,6,2),
+			hour =>substr($date,9,2),
+			minute =>substr($date,12,2),
+			second =>substr($date,15,2),
+			nanosecond => 0,
+			time_zone => 'Europe/Paris',
+		);
+		my $days_to_expiration=ceil(($dt->epoch()-$now->epoch())/86400);
+		if($days_to_expiration > $critical_threshold) {
+			$warning.=$current_cn_k.' ('.$days_to_expiration.' days left but a pending request exists), ';
+			$warning_count++;
+			if($return_code<$ERRORS{'WARNING'}) {
+				$return_code=$ERRORS{'WARNING'};
+				$state='WARNING';
+			}
+		} else {
+			$critical.=$current_cn_k.' ('.$days_to_expiration.' days left but a pending request exists), ';
+			if($return_code<$ERRORS{'CRITICAL'}) {
+				$return_code=$ERRORS{'CRITICAL'};
+				$state='CRITICAL';
+			}
+			$critical_count++;
+		}
+	} elsif(defined $current_cn{'valid'}) {
+		$date=$current_cn{'valid'};
+	}
+}
+
+my $message = '';
+if(length $critical ne 0) {
+	$message = substr($critical,0,-2);
+}
+if(length $warning ne 0) {
+	$message .= (length $message eq 0 ? '':' / ' ).substr($warning,0,-2);
+}
+if($return_code eq $ERRORS{'OK'}) {
+	$message = 'all expirations date are in a far far future ...';
+}
+print 'GANDI '.$state.' - '.$message.'|critical='.$critical_count.' warning='.$warning_count."\n";
+exit $return_code;
+
+

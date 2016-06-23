@@ -149,7 +149,7 @@ foreach my $current_cn_k (keys %certs){
 			time_zone => 'Europe/Paris',
 		);
 		my $days_to_expiration=ceil(($dt->epoch()-$now->epoch())/86400);
-		$critical.=$current_cn_k.' (Expired since '.($days_to_expiration*-1).'i days), ';
+		$critical.=$current_cn_k.' (Expired since '.($days_to_expiration*-1).' days), ';
 		if($return_code<$ERRORS{'CRITICAL'}) {
 			$return_code=$ERRORS{'CRITICAL'};
 			$state='CRITICAL';

@@ -86,7 +86,7 @@ for ligne in conffile:
 		break
 	if re.match(".*Runall:.*",ligne):	
 		break
- 	if (not re.match("^[\s]*#",ligne) and debutbank == 1):
+ 	if (not re.match("^[\s]*#",ligne) and not re.match("^[\s]*$",ligne) and debutbank == 1):
 		banks.append(ligne.strip())
 
 if not banks:
